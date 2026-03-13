@@ -1,0 +1,17 @@
+{
+  "name": "csti-login",
+  "version": "1.0.0",
+  "description": "Script de login en CSTI Cloud con scheduler",
+  "main": "scheduler.js",
+  "scripts": {
+    "ingreso": "node -r dotenv/config main.js ingreso",
+    "salida": "node -r dotenv/config main.js salida",
+    "actividad": "node -r dotenv/config actividades.js",
+    "schedule": "node -r dotenv/config scheduler.js"
+  },
+  "dependencies": {
+    "cron": "^3.1.7",
+    "dotenv": "^16.4.5",
+    "node-fetch": "^2.7.0"
+  }
+}
