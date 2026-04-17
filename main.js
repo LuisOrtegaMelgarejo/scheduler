@@ -1,15 +1,19 @@
 const fetch = require('node-fetch');
 
+// Ignorar verificación de certificados SSL
+process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
+
 // URLs
 const baseUrl = process.env.URL;
+const indexUrl = `${baseUrl}/index.app`;
 const loginPageUrl = `${baseUrl}/login.jsp`;
 const loginUrl = `${baseUrl}/login.usuario`;
 const asistenciaUrl = `${baseUrl}/insertarIngreso.asistencia?method=insertarAsistencia`;
 
 // Leer credenciales de variables de entorno
 const credentials = {
-  txtUsername: process.env.USERNAME || '',
-  txtPassword: process.env.PASSWORD || '',
+  txtUsername: process.env.TXT_USERNAME || '',
+  txtPassword: process.env.TXT_PASSWORD || '',
   method: 'login',
   movil_: false,
   ippublica: 'desactivado'
@@ -19,14 +23,14 @@ const credentials = {
 if (!credentials.txtUsername || !credentials.txtPassword) {
   console.error('❌ Error: Credenciales no configuradas');
   console.error('Define las siguientes variables de entorno:');
-  console.error('  - USERNAME: usuario');
-  console.error('  - PASSWORD: contraseña');
+  console.error('  - TXT_USERNAME: usuario');
+  console.error('  - TXT_PASSWORD: contraseña');
   console.error('\nEjemplo:');
-  console.error('  export USERNAME="user@example.com"');
-  console.error('  export PASSWORD="password123"');
+  console.error('  export TXT_USERNAME="user@example.com"');
+  console.error('  export TXT_PASSWORD="password123"');
   console.error('\nO crea un archivo .env con el contenido:');
-  console.error('  USERNAME=user@example.com');
-  console.error('  PASSWORD=password123');
+  console.error('  TXT_USERNAME=user@example.com');
+  console.error('  TXT_PASSWORD=password123');
   process.exit(1);
 }
 
@@ -46,47 +50,92 @@ const browserHeaders = {
 // Almacenar cookies
 let cookies = {};
 
-async function fetchWithCookies(url, options = {}) {
-  // Construir header de cookies
-  const cookieHeader = Object.entries(cookies)
-    .map(([key, value]) => `${key}=${value}`)
-    .join('; ');
+async function fetchWithCookies(url, options = {}, maxRedirects = 5) {
+  let currentUrl = url;
+  let redirectCount = 0;
 
-  const headers = {
-    ...browserHeaders,
-    ...options.headers
-  };
+  while (redirectCount < maxRedirects) {
+    // Construir header de cookies
+    const cookieHeader = Object.entries(cookies)
+      .map(([key, value]) => `${key}=${value}`)
+      .join('; ');
 
-  if (cookieHeader) {
-    headers['Cookie'] = cookieHeader;
-  }
+    const headers = {
+      ...browserHeaders,
+      ...options.headers
+    };
 
-  const response = await fetch(url, {
-    ...options,
-    headers,
-    redirect: 'follow'
-  });
+    if (cookieHeader) {
+      headers['Cookie'] = cookieHeader;
+    }
 
-  // Capturar Set-Cookie
-  const setCookie = response.headers.get('set-cookie');
-  if (setCookie) {
-    const cookieLines = Array.isArray(setCookie) ? setCookie : [setCookie];
-    cookieLines.forEach(line => {
-      const parts = line.split(';')[0].split('=');
-      if (parts.length === 2) {
-        cookies[parts[0].trim()] = parts[1].trim();
-      }
+    const response = await fetch(currentUrl, {
+      ...options,
+      headers,
+      redirect: 'manual'
     });
+
+    // Capturar Set-Cookie
+    const setCookie = response.headers.get('set-cookie');
+    if (setCookie) {
+      const cookieLines = Array.isArray(setCookie) ? setCookie : [setCookie];
+      cookieLines.forEach(line => {
+        const parts = line.split(';')[0].split('=');
+        if (parts.length === 2) {
+          cookies[parts[0].trim()] = parts[1].trim();
+        }
+      });
+    }
+
+    // Si no es un redirect, retornar la respuesta
+    if (![301, 302, 303, 307, 308].includes(response.status)) {
+      return response;
+    }
+
+    // Procesar redirect
+    const redirectUrl = response.headers.get('location');
+    if (!redirectUrl) {
+      console.log(`⚠️ Redirect sin Location header (${response.status})`);
+      return response;
+    }
+
+    // Convertir URL relativa a absoluta y normalizar protocolo
+    let nextUrl;
+    if (redirectUrl.startsWith('http')) {
+      // Forzar HTTPS si es http
+      nextUrl = redirectUrl.replace(/^http:\/\//i, 'https://');
+    } else {
+      // URL relativa
+      const urlObj = new URL(currentUrl);
+      nextUrl = `${urlObj.origin}${redirectUrl}`;
+      // Asegurar HTTPS
+      nextUrl = nextUrl.replace(/^http:\/\//i, 'https://');
+    }
+    
+    console.log(`↪️ Redirect (${response.status}): ${nextUrl}`);
+    
+    currentUrl = nextUrl;
+    redirectCount++;
   }
 
-  return response;
+  throw new Error(`Demasiados redirects (${maxRedirects})`);
 }
 
 async function step1LoadLoginPage() {
   console.log('📝 === PASO 1: CARGAR PÁGINA DE LOGIN ===\n');
-  console.log(`🔗 URL: ${loginPageUrl}\n`);
+  console.log(`🔗 URL inicial: ${indexUrl}\n`);
 
   try {
+    // Primero, acceder a index.app que debe redirigir a login.jsp
+    const response1 = await fetchWithCookies(indexUrl, {
+      method: 'GET'
+    });
+
+    console.log(`✓ Status: ${response1.status}`);
+    
+    // Luego cargar la página de login
+    console.log(`🔗 URL de login: ${loginPageUrl}\n`);
+    
     const response = await fetchWithCookies(loginPageUrl, {
       method: 'GET'
     });
